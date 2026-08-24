@@ -1,0 +1,7 @@
+pydantic>=2.12.5
+scikit-learn>=1.7.2
+numpy>=2.3.3
+python-dotenv>=1.2.3
+pytest>=9.1.1
+google-genai>=2.19.0
+openai>=3.3.1
