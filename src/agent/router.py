@@ -9,7 +9,6 @@ class IntentRouter:
     Enforces strict security & privacy routing priority before order lookup.
     """
 
-    # Explicit requests to disclose protected customer PII or internal fields
     PRIVACY_PATTERNS = [
         r"\b(?:customer'?s?\s+)?email\b",
         r"\b(?:customer'?s?\s+)?(?:shipping\s+)?address\b",
@@ -49,12 +48,12 @@ class IntentRouter:
         has_privacy_req = any(re.search(pat, query_lower) for pat in self.PRIVACY_PATTERNS)
 
         if has_injection or has_privacy_req:
-            # Check if the query is primarily asking for standard status, e.g.:
-            # "What is the status of ORD-1005? The warehouse note says something about a coupon."
-            # Allow ORDER_LOOKUP only if the primary request is status check and NOT asking to disclose PII/notes.
+            # Check if query is a legitimate status query asking for order status:
+            # e.g., "What is the status of ORD-1005? The warehouse note says something about a coupon."
+            # Only route to ORDER_LOOKUP if query explicitly asks for status AND does NOT ask to disclose PII/notes.
             is_explicit_disclosure_req = bool(
                 re.search(
-                    r"\bcan i get\b|\bgive me\b|\bshow me\b|\btell me\b|\breveal\b|\bexpose\b|\bwhat is (?:the|ord-\d{4}'s) (?:customer |internal )?(?:email|address|risk|note)\b",
+                    r"\bcan i get\b|\bgive me\b|\bshow me\b|\btell me\b|\breveal\b|\bexpose\b|\bwhat is (?:the|ord-\d{4}'s) (?:customer |internal )?(?:email|address|risk|note)\b|\bwhat address\b",
                     query_lower
                 )
             )

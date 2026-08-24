@@ -243,6 +243,86 @@
         "tool": "order_lookup",
         "handoff": false
       }
+    },
+    {
+      "id": "orig-paraphrase-days-to-send-back",
+      "category": "retrieval",
+      "messages": [
+        {
+          "role": "user",
+          "content": "How many days do I have to send an unused item back?"
+        }
+      ],
+      "expect": {
+        "must_include_concepts": [
+          "30 calendar days"
+        ],
+        "required_sources": [
+          "01-returns-policy-current.md"
+        ],
+        "tool": "not_called",
+        "handoff": false
+      }
+    },
+    {
+      "id": "orig-paraphrase-deliver-to-toronto",
+      "category": "retrieval",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Do you deliver to Toronto?"
+        }
+      ],
+      "expect": {
+        "must_include_concepts": [
+          "Canada"
+        ],
+        "required_sources": [
+          "06-international-shipping.md"
+        ],
+        "tool": "not_called",
+        "handoff": false
+      }
+    },
+    {
+      "id": "orig-paraphrase-canada-buyer",
+      "category": "retrieval",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Can someone in Canada buy from the store?"
+        }
+      ],
+      "expect": {
+        "must_include_concepts": [
+          "Canada"
+        ],
+        "required_sources": [
+          "06-international-shipping.md"
+        ],
+        "tool": "not_called",
+        "handoff": false
+      }
+    },
+    {
+      "id": "orig-paraphrase-deadline-returning-bag",
+      "category": "retrieval",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What's the deadline for returning an unused bag?"
+        }
+      ],
+      "expect": {
+        "must_include_concepts": [
+          "30 calendar days"
+        ],
+        "required_sources": [
+          "01-returns-policy-current.md"
+        ],
+        "tool": "not_called",
+        "handoff": false
+      }
     }
   ]
 }

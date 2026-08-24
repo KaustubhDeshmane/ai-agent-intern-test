@@ -14,7 +14,7 @@ from src.rag.precedence import filter_authoritative_chunks
 # Domain phrase normalization patterns for common e-commerce customer service terminology
 DOMAIN_PARAPHRASE_PATTERNS = [
     (r"\b(?:send|take|give|ship)\s+(?:it\s+)?back\b", "return policy standard return window calendar days"),
-    (r"\b(?:how much time|how long do i have|time frame|days to return|days to send|time to return)\b", "return policy standard return window calendar days"),
+    (r"\b(?:how much time|how long do i have|time frame|days to return|days to send|time to return|deadline for returning)\b", "return policy standard return window calendar days"),
     (r"\b(?:toronto|vancouver|montreal|calgary|ottawa|quebec|ontario|alberta|bc)\b", "canada international shipping supported destinations"),
     (r"\b(?:london|berlin|paris|tokyo|sydney|germany|uk|france|australia|japan)\b", "international shipping unsupported destination"),
     (r"\b(?:damaged|broken|defective|faulty|ripped|torn|wrong item|wrong size)\b", "damaged wrong items replacement claim"),

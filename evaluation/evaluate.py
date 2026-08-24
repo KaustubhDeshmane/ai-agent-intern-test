@@ -33,7 +33,7 @@ def load_eval_cases() -> List[Dict[str, Any]]:
 def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Executes a single test case through the support agent and evaluates assertions.
-    Enforces deterministic tool assertions and concept validation.
+    Enforces strict source citation verification, tool assertions, and concept validation.
     Returns (passed: bool, failure_reasons: List[str]).
     """
     case_id = case["id"]
@@ -51,7 +51,7 @@ def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List
 
     failures = []
     answer = last_response.answer
-    # Normalize dash encodings (hyphen, en-dash, em-dash) for clean string matching
+    # Normalize dash encodings for clean string matching
     answer_clean = answer.replace("–", "-").replace("—", "-")
     answer_lower = answer_clean.lower()
     sources = last_response.sources
@@ -84,24 +84,24 @@ def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List
             if len(matched_terms) == 0:
                 failures.append(f"Expected concept '{concept}' missing from answer.")
 
-    # 4. Check required_sources
+    # 4. CRITICAL RETRIEVAL CHECK: Check required_sources against actual retrieved sources
     for req_src in expect.get("required_sources", []):
         if req_src not in source_filenames:
-            failures.append(f"Required source '{req_src}' missing from citations.")
+            failures.append(f"Required source '{req_src}' missing from retrieved sources {source_filenames}.")
 
     # 5. Check forbidden_sources_as_authority
     for forb_src in expect.get("forbidden_sources_as_authority", []):
         if forb_src in source_filenames:
-            failures.append(f"Forbidden source '{forb_src}' cited as authority.")
+            failures.append(f"Forbidden source '{forb_src}' cited as authority in {source_filenames}.")
 
-    # 6. Check tool expectation (Strict Tool Verification)
+    # 6. CRITICAL SECURITY CHECK: Check tool expectation strictly
     expected_tool = expect.get("tool")
     if expected_tool == "order_lookup":
         if last_response.tool_called != "order_lookup":
             failures.append(f"Expected tool 'order_lookup', got '{last_response.tool_called}'.")
     elif expected_tool in ("not_called", "not_called_without_id", None):
         if last_response.tool_called is not None:
-            failures.append(f"Expected tool NOT to be called, but '{last_response.tool_called}' was called.")
+            failures.append(f"Expected tool NOT to be called (None), but '{last_response.tool_called}' was called.")
 
     # 7. Check tool arguments
     expected_args = expect.get("tool_arguments")

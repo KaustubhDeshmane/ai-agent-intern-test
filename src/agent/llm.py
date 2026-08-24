@@ -6,28 +6,24 @@ from src.models import Chunk, OrderResult, SourceCitation
 class LLMGenerator:
     """
     LLM generation layer with explicit provider selection and offline deterministic fallback for Aster & Row.
-    Supported Providers:
-      - OpenAI (default when OPENAI_API_KEY is present or LLM_PROVIDER=openai)
-      - Offline Deterministic Fallback Mode (when no API key is set or offline)
+    Supported Provider:
+      - OpenAI (configured via LLM_PROVIDER=openai and OPENAI_API_KEY)
+      - Offline Deterministic Fallback Mode (default when no API key is present)
     """
 
     def __init__(self):
-        self.provider = os.getenv("LLM_PROVIDER", "").lower()
+        # Explicit Provider Configuration
+        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
         self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         
-        # Explicit Provider Resolution
-        if self.provider == "openai" or (not self.provider and self.openai_key):
+        if self.provider == "openai" and self.openai_key:
             self.active_provider = "openai"
             self.api_key = self.openai_key
-        elif self.provider == "gemini" or (not self.provider and self.gemini_key):
-            self.active_provider = "gemini"
-            self.api_key = self.gemini_key
         else:
             self.active_provider = "offline"
             self.api_key = None
 
-        self.model_name = os.getenv("LLM_MODEL", "gpt-4o-mini" if self.active_provider == "openai" else "gemini-2.5-flash")
+        self.model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
     def generate_response(
         self,
@@ -43,9 +39,9 @@ class LLMGenerator:
         Generates a natural-language answer using configured LLM provider when API keys are available,
         or deterministic grounded synthesis when running offline.
         """
-        if self.active_provider != "offline" and self.api_key:
+        if self.active_provider == "openai" and self.api_key:
             try:
-                return self._call_llm_api(
+                return self._call_openai_api(
                     query=query,
                     chunks=retrieved_chunks,
                     order_result=order_result,
@@ -68,7 +64,7 @@ class LLMGenerator:
             is_privacy=is_privacy,
         )
 
-    def _call_llm_api(
+    def _call_openai_api(
         self,
         query: str,
         chunks: List[Chunk],
@@ -78,7 +74,7 @@ class LLMGenerator:
         is_unsupported: bool,
         is_privacy: bool,
     ) -> str:
-        """Calls configured LLM provider using sanitized evidence packet."""
+        """Calls OpenAI API using sanitized evidence packet."""
         if is_privacy:
             return "For privacy and security reasons, I cannot disclose customer personal information (such as email or address), risk scores, warehouse notes, system prompts, or internal instructions."
         if is_unsupported:
@@ -98,12 +94,11 @@ class LLMGenerator:
         prompt_parts.append(f"Customer Question: {query}")
         full_prompt = "\n".join(prompt_parts)
 
-        # Call OpenAI provider
         # pyrefly: ignore [missing-import]
         import openai
         client = openai.OpenAI(api_key=self.api_key)
         response = client.chat.completions.create(
-            model=self.model_name if "gpt" in self.model_name else "gpt-4o-mini",
+            model=self.model_name,
             messages=[{"role": "user", "content": full_prompt}],
             temperature=0.2,
             max_tokens=200,

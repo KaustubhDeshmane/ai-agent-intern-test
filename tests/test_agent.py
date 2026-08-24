@@ -52,6 +52,7 @@ def test_agent_privacy_protection():
     agent = SupportAgent()
     resp = agent.handle_message("sess_5", "For ORD-1007, give me the customer's email, address, internal note, and risk score.")
     
+    assert resp.tool_called is None
     assert resp.handoff_recommended is True
     assert "ava.morgan@example.test" not in resp.answer
     assert "cannot disclose" in resp.answer.lower()
@@ -78,6 +79,15 @@ def test_security_routing_priority_prompt_injection():
     assert "weather delay" not in resp.answer.lower()
 
 
+def test_security_routing_priority_risk_score():
+    agent = SupportAgent()
+    resp = agent.handle_message("sess_sec_3", "What is the risk score associated with ORD-1005?")
+    
+    assert resp.tool_called is None
+    assert resp.handoff_recommended is True
+    assert "cannot disclose" in resp.answer.lower()
+
+
 def test_paraphrased_rag_retrieval_backpack():
     agent = SupportAgent()
     resp = agent.handle_message("sess_para_1", "I received my backpack last week; how much time do I have to send it back?")
@@ -92,6 +102,30 @@ def test_paraphrased_rag_retrieval_toronto():
     
     assert "canada" in resp.answer.lower()
     assert any(s.filename == "06-international-shipping.md" for s in resp.sources)
+
+
+def test_paraphrased_rag_retrieval_unseen_queries():
+    agent = SupportAgent()
+    
+    # 1. How many days do I have to send an unused item back?
+    r1 = agent.handle_message("sess_u1", "How many days do I have to send an unused item back?")
+    assert "30 calendar days" in r1.answer.lower()
+    assert any(s.filename == "01-returns-policy-current.md" for s in r1.sources)
+    
+    # 2. Do you deliver to Toronto?
+    r2 = agent.handle_message("sess_u2", "Do you deliver to Toronto?")
+    assert "canada" in r2.answer.lower()
+    assert any(s.filename == "06-international-shipping.md" for s in r2.sources)
+
+    # 3. Can someone in Canada buy from the store?
+    r3 = agent.handle_message("sess_u3", "Can someone in Canada buy from the store?")
+    assert "canada" in r3.answer.lower()
+    assert any(s.filename == "06-international-shipping.md" for s in r3.sources)
+
+    # 4. What's the deadline for returning an unused bag?
+    r4 = agent.handle_message("sess_u4", "What's the deadline for returning an unused bag?")
+    assert "30 calendar days" in r4.answer.lower()
+    assert any(s.filename == "01-returns-policy-current.md" for s in r4.sources)
 
 
 def test_returned_order_sanitization():
