@@ -80,7 +80,7 @@ def validate_grounded_response(
 
     if is_privacy:
         return (
-            "For privacy and security reasons, I cannot disclose customer PII (such as email addresses or shipping addresses), risk scores, warehouse notes, or internal instructions.",
+            "For privacy and security reasons, I cannot disclose customer personal information (such as email or address), risk scores, warehouse notes, system prompts, or internal instructions.",
             True  # Privacy requests recommend handoff to human support
         )
 

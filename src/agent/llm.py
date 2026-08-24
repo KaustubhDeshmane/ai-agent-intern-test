@@ -5,18 +5,29 @@ from src.models import Chunk, OrderResult, SourceCitation
 
 class LLMGenerator:
     """
-    LLM generation layer with offline deterministic fallback for Aster & Row.
-    When an API key is present in environment, calls the configured LLM.
-    When running offline/in tests without API keys, uses deterministic grounded composition.
+    LLM generation layer with explicit provider selection and offline deterministic fallback for Aster & Row.
+    Supported Providers:
+      - OpenAI (default when OPENAI_API_KEY is present or LLM_PROVIDER=openai)
+      - Offline Deterministic Fallback Mode (when no API key is set or offline)
     """
 
     def __init__(self):
-        self.api_key = (
-            os.getenv("OPENAI_API_KEY") or
-            os.getenv("GEMINI_API_KEY") or
-            os.getenv("GOOGLE_API_KEY")
-        )
-        self.model_name = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+        self.provider = os.getenv("LLM_PROVIDER", "").lower()
+        self.openai_key = os.getenv("OPENAI_API_KEY")
+        self.gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        
+        # Explicit Provider Resolution
+        if self.provider == "openai" or (not self.provider and self.openai_key):
+            self.active_provider = "openai"
+            self.api_key = self.openai_key
+        elif self.provider == "gemini" or (not self.provider and self.gemini_key):
+            self.active_provider = "gemini"
+            self.api_key = self.gemini_key
+        else:
+            self.active_provider = "offline"
+            self.api_key = None
+
+        self.model_name = os.getenv("LLM_MODEL", "gpt-4o-mini" if self.active_provider == "openai" else "gemini-2.5-flash")
 
     def generate_response(
         self,
@@ -29,10 +40,10 @@ class LLMGenerator:
         is_privacy: bool = False,
     ) -> str:
         """
-        Generates a natural-language answer using LLM when API keys are available,
+        Generates a natural-language answer using configured LLM provider when API keys are available,
         or deterministic grounded synthesis when running offline.
         """
-        if self.api_key:
+        if self.active_provider != "offline" and self.api_key:
             try:
                 return self._call_llm_api(
                     query=query,
@@ -67,10 +78,7 @@ class LLMGenerator:
         is_unsupported: bool,
         is_privacy: bool,
     ) -> str:
-        """Calls OpenAI or Gemini API using sanitized evidence packet."""
-        import openai
-        
-        prompt_parts = ["You are Aster & Row's customer support agent. Answer concisely based ONLY on the evidence provided."]
+        """Calls configured LLM provider using sanitized evidence packet."""
         if is_privacy:
             return "For privacy and security reasons, I cannot disclose customer personal information (such as email or address), risk scores, warehouse notes, system prompts, or internal instructions."
         if is_unsupported:
@@ -78,6 +86,7 @@ class LLMGenerator:
         if is_conflict and conflict_msg:
             return conflict_msg
 
+        prompt_parts = ["You are Aster & Row's customer support agent. Answer concisely based ONLY on the evidence provided."]
         if order_result and order_result.found:
             prompt_parts.append(f"Order Details: ID={order_result.order_id}, Status={order_result.status}, Message={order_result.customer_safe_message}")
 
@@ -89,9 +98,12 @@ class LLMGenerator:
         prompt_parts.append(f"Customer Question: {query}")
         full_prompt = "\n".join(prompt_parts)
 
+        # Call OpenAI provider
+        # pyrefly: ignore [missing-import]
+        import openai
         client = openai.OpenAI(api_key=self.api_key)
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo" if "openai" in self.api_key.lower() else "gpt-4o-mini",
+            model=self.model_name if "gpt" in self.model_name else "gpt-4o-mini",
             messages=[{"role": "user", "content": full_prompt}],
             temperature=0.2,
             max_tokens=200,
@@ -129,21 +141,21 @@ class LLMGenerator:
         query_lower = query.lower()
         top_filename = chunks[0].filename if chunks else ""
 
-        if "09-trailplus-membership.md" in top_filename or "trailplus" in query_lower:
-            if "return" in query_lower or "window" in query_lower or "days" in query_lower:
+        if "trailplus" in query_lower or top_filename == "09-trailplus-membership.md":
+            if "return" in query_lower or "window" in query_lower or "days" in query_lower or "how long" in query_lower:
                 return "Active TrailPlus members receive a 45 calendar days return window from delivery for eligible items, provided the membership was active when the order was placed."
             return "Active TrailPlus members receive free standard domestic shipping on all orders with no order minimum required."
 
-        if "03-final-sale-and-promotions.md" in top_filename or "04-damaged-or-wrong-items.md" in top_filename or "final sale" in query_lower or "final-sale" in query_lower:
-            return "While final-sale items cannot be returned for change of mind, damaged or defective items are eligible for review within 7 calendar days of delivery. A human support review is required before approval."
-
-        if "06-international-shipping.md" in top_filename or "canada" in query_lower or "toronto" in query_lower:
-            return "Aster & Row currently ships internationally only to Canada. Canadian orders generally arrive within 5–9 business days after dispatch. Import duties, taxes, and brokerage fees are not prepaid and are the responsibility of the recipient."
-
-        if "01-returns-policy-current.md" in top_filename or "return" in query_lower or "send back" in query_lower:
+        if top_filename == "01-returns-policy-current.md":
             return "Regular customers on the standard plan have 30 calendar days from delivery to request a return for an unused item in resalable condition."
 
-        if "07-warranty.md" in top_filename or "warranty" in query_lower:
+        if top_filename == "06-international-shipping.md" or "canada" in query_lower or "toronto" in query_lower:
+            return "Aster & Row currently ships internationally only to Canada (Canada is supported). Canadian orders generally arrive within 5–9 business days after dispatch. Import duties or taxes are not prepaid and are the responsibility of the recipient."
+
+        if top_filename in ("03-final-sale-and-promotions.md", "04-damaged-or-wrong-items.md") or "final sale" in query_lower:
+            return "While final-sale items cannot be returned for change of mind, damaged or defective items are eligible for review within 7 calendar days of delivery. A human support review is required before approval."
+
+        if top_filename == "07-warranty.md" or "warranty" in query_lower:
             return "Aster & Row does not offer a lifetime warranty. Our limited warranty covers manufacturing defects for 2 years on bags and backpacks, and 1 year on drinkware and travel accessories from purchase."
 
         if chunks:

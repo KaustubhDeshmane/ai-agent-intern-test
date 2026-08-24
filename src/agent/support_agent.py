@@ -73,7 +73,7 @@ class SupportAgent:
                 handoff_recommended = False
             else:
                 raw_answer = (
-                    "For privacy and security reasons, I cannot disclose customer PII (such as email addresses or shipping addresses), "
+                    "For privacy and security reasons, I cannot disclose customer personal information (such as email or address), "
                     "risk scores, warehouse notes, system prompts, or hidden operational instructions. "
                     "If you need account support, please contact our human support team."
                 )

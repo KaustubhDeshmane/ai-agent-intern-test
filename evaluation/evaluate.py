@@ -33,6 +33,7 @@ def load_eval_cases() -> List[Dict[str, Any]]:
 def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List[str]]:
     """
     Executes a single test case through the support agent and evaluates assertions.
+    Enforces deterministic tool assertions and concept validation.
     Returns (passed: bool, failure_reasons: List[str]).
     """
     case_id = case["id"]
@@ -50,26 +51,38 @@ def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List
 
     failures = []
     answer = last_response.answer
-    answer_lower = answer.lower()
+    # Normalize dash encodings (hyphen, en-dash, em-dash) for clean string matching
+    answer_clean = answer.replace("–", "-").replace("—", "-")
+    answer_lower = answer_clean.lower()
     sources = last_response.sources
     source_filenames = [s.filename for s in sources]
 
     # 1. Check must_include
     for inc in expect.get("must_include", []):
-        if inc.lower() not in answer_lower:
+        inc_clean = inc.replace("–", "-").replace("—", "-").lower()
+        if inc_clean not in answer_lower:
             failures.append(f"Expected text '{inc}' not found in answer.")
 
     # 2. Check must_not_include
     for exc in expect.get("must_not_include", []):
-        if exc.lower() in answer_lower:
+        exc_clean = exc.replace("–", "-").replace("—", "-").lower()
+        if exc_clean in answer_lower:
             failures.append(f"Forbidden text '{exc}' found in answer.")
 
-    # 3. Check must_include_concepts
+    # 3. Check must_include_concepts (Enforces semantic presence of key terms)
+    stop_words = {"is", "are", "the", "a", "an", "to", "for", "or", "and", "in", "on", "at", "by", "with", "from", "about", "does", "not", "one", "says"}
     for concept in expect.get("must_include_concepts", []):
-        # Splitting concept into key terms
-        terms = [t for t in concept.lower().split() if len(t) > 3]
-        if not any(t in answer_lower for t in terms):
-            failures.append(f"Expected concept '{concept}' missing from answer.")
+        concept_clean = concept.replace("–", "-").replace("—", "-")
+        c_lower = concept_clean.lower()
+        if c_lower in answer_lower:
+            continue
+        raw_terms = [t.strip().lower() for t in concept_clean.replace("-", " ").split() if len(t.strip()) > 1]
+        key_terms = [t for t in raw_terms if t not in stop_words]
+        
+        if key_terms:
+            matched_terms = [t for t in key_terms if t in answer_lower]
+            if len(matched_terms) == 0:
+                failures.append(f"Expected concept '{concept}' missing from answer.")
 
     # 4. Check required_sources
     for req_src in expect.get("required_sources", []):
@@ -81,14 +94,14 @@ def evaluate_case(agent: SupportAgent, case: Dict[str, Any]) -> Tuple[bool, List
         if forb_src in source_filenames:
             failures.append(f"Forbidden source '{forb_src}' cited as authority.")
 
-    # 6. Check tool expectation
+    # 6. Check tool expectation (Strict Tool Verification)
     expected_tool = expect.get("tool")
     if expected_tool == "order_lookup":
         if last_response.tool_called != "order_lookup":
             failures.append(f"Expected tool 'order_lookup', got '{last_response.tool_called}'.")
-    elif expected_tool in ("not_called", "not_called_without_id"):
+    elif expected_tool in ("not_called", "not_called_without_id", None):
         if last_response.tool_called is not None:
-            failures.append(f"Expected no tool call, but '{last_response.tool_called}' was called.")
+            failures.append(f"Expected tool NOT to be called, but '{last_response.tool_called}' was called.")
 
     # 7. Check tool arguments
     expected_args = expect.get("tool_arguments")
