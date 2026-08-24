@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from src.tools.order_tool import extract_order_id
 
+MAX_SESSION_TURNS = 15
+STALE_ORDER_TURN_THRESHOLD = 5
+
 
 @dataclass
 class SessionTurn:
@@ -16,6 +19,7 @@ class SessionState:
     active_order_id: Optional[str] = None
     active_topic: Optional[str] = None
     active_country: Optional[str] = None
+    unrelated_order_turns: int = 0
 
 
 class SessionManager:
@@ -32,10 +36,15 @@ class SessionManager:
     def add_user_message(self, session_id: str, content: str):
         session = self.get_session(session_id)
         session.turns.append(SessionTurn(role="user", content=content))
+        # Enforce bounded session turn memory
+        if len(session.turns) > MAX_SESSION_TURNS:
+            session.turns = session.turns[-MAX_SESSION_TURNS:]
 
     def add_assistant_message(self, session_id: str, content: str):
         session = self.get_session(session_id)
         session.turns.append(SessionTurn(role="assistant", content=content))
+        if len(session.turns) > MAX_SESSION_TURNS:
+            session.turns = session.turns[-MAX_SESSION_TURNS:]
 
     def update_context(
         self,
@@ -47,6 +56,7 @@ class SessionManager:
         session = self.get_session(session_id)
         if order_id:
             session.active_order_id = order_id
+            session.unrelated_order_turns = 0
         if topic:
             session.active_topic = topic
         if country:
@@ -59,16 +69,30 @@ class SessionManager:
 
     def resolve_query_context(self, session_id: str, current_query: str) -> Dict[str, Any]:
         """
-        Resolves implicit context (order_id, topic, country) for follow-up turns
-        and updates active session state.
+        Resolves implicit context (order_id, topic, country) for follow-up turns,
+        bounds memory, and expires stale order context.
         """
         session = self.get_session(session_id)
         query_lower = current_query.lower()
         
-        # 1. Order ID resolution
+        # 1. Order ID resolution & Stale Order Context Protection
         extracted_id = extract_order_id(current_query)
         if extracted_id:
             session.active_order_id = extracted_id
+            session.unrelated_order_turns = 0
+        else:
+            # Check if current query is related to order status
+            is_order_query = any(w in query_lower for w in ["order", "status", "ship", "deliver", "tracking", "arrive", "where is"])
+            if session.active_order_id:
+                if is_order_query:
+                    session.unrelated_order_turns = 0
+                else:
+                    session.unrelated_order_turns += 1
+                    # Expire active_order_id if threshold exceeded
+                    if session.unrelated_order_turns >= STALE_ORDER_TURN_THRESHOLD:
+                        session.active_order_id = None
+                        session.unrelated_order_turns = 0
+
         resolved_order_id = session.active_order_id
         
         # 2. International shipping follow-up resolution

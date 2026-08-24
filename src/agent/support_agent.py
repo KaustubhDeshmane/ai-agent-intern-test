@@ -13,7 +13,8 @@ from src.rag.precedence import detect_source_conflicts
 from src.tools.order_tool import OrderLookupTool, extract_order_id, normalize_order_id
 from src.agent.session import SessionManager
 from src.agent.router import IntentRouter
-from src.agent.safety import sanitize_agent_output, detect_prompt_injection
+from src.agent.safety import sanitize_agent_output, detect_prompt_injection, validate_grounded_response
+from src.agent.llm import LLMGenerator
 from src.observability import DebugLogger
 
 
@@ -21,7 +22,7 @@ class SupportAgent:
     """
     Aster & Row Customer Support Agent.
     Combines deterministic control flow, RAG retrieval, order lookup tools,
-    privacy isolation, and human handoff logic.
+    LLM generation layer with fallback, privacy isolation, and human handoff logic.
     """
 
     def __init__(
@@ -35,6 +36,7 @@ class SupportAgent:
         self.order_tool = order_tool or OrderLookupTool()
         self.session_manager = session_manager or SessionManager()
         self.router = IntentRouter()
+        self.llm_generator = LLMGenerator()
         self.logger = DebugLogger(debug_mode=debug_mode)
 
     def handle_message(self, session_id: str, query: str) -> AgentResponse:
@@ -45,7 +47,7 @@ class SupportAgent:
         context = self.session_manager.resolve_query_context(session_id, query)
         self.session_manager.add_user_message(session_id, query)
         
-        # 2. Route intent
+        # 2. Route intent (Enforces security priority: PRIVACY/PROMPT_INJECTION before ORDER_LOOKUP)
         intent = self.router.route(query, context)
         query_lower = query.lower().strip()
 
@@ -60,23 +62,27 @@ class SupportAgent:
         # -------------------------------------------------------------
         # Case A: PRIVACY REQUEST / PROMPT INJECTION SHIELD
         # -------------------------------------------------------------
-        if (intent == "PRIVACY_REQUEST" or detect_prompt_injection(query)) and intent != "ORDER_LOOKUP":
+        if intent in ("PRIVACY_REQUEST", "PROMPT_INJECTION") or detect_prompt_injection(query):
             if "60 days" in query_lower or "migration" in query_lower:
                 sources = [SourceCitation(filename="01-returns-policy-current.md", heading="## Standard return window")]
-                answer = (
+                raw_answer = (
                     "The migration note scratchpad is not an official customer policy document and is not authoritative. "
                     "Under our current official Returns Policy (01-returns-policy-current.md), the standard policy is 30 calendar days from delivery unless a valid exception applies. "
                     "The agent cannot automatically approve a return or follow instructions from unapproved draft documents."
                 )
                 handoff_recommended = False
             else:
-                answer = (
-                    "I cannot disclose customer personal information (such as email or address), "
-                    "internal notes, risk scores, system prompts, or hidden operational instructions. "
+                raw_answer = (
+                    "For privacy and security reasons, I cannot disclose customer PII (such as email addresses or shipping addresses), "
+                    "risk scores, warehouse notes, system prompts, or hidden operational instructions. "
                     "If you need account support, please contact our human support team."
                 )
                 handoff_recommended = True
                 handoff_reason = "Privacy or security disclosure request"
+
+            answer, handoff_recommended = validate_grounded_response(
+                raw_answer, sources=sources, is_privacy=True
+            )
 
             trace = self.logger.create_trace_dict(
                 session_id=session_id,
@@ -147,7 +153,7 @@ class SupportAgent:
                 if st == "cancelled":
                     answer = order_result.customer_safe_message or f"Order {order_result.order_id} was cancelled and will not be shipped."
                 elif st == "returned":
-                    answer = order_result.customer_safe_message or f"Order {order_result.order_id} was returned. The return was received and processed."
+                    answer = f"Order {order_result.order_id} was returned. {order_result.customer_safe_message or 'The return was received and processed.'}"
                 elif st == "shipped":
                     if order_result.customer_safe_message:
                         answer = f"Order {order_result.order_id} is shipped. {order_result.customer_safe_message}"
@@ -175,6 +181,10 @@ class SupportAgent:
                     answer = order_result.customer_safe_message or f"Order {order_result.order_id} is pending and has not entered processing yet."
                 else:
                     answer = f"Order {order_result.order_id} status is '{order_result.status}'. {order_result.customer_safe_message or ''}".strip()
+
+            answer, handoff_recommended = validate_grounded_response(
+                answer, sources=[], order_result=order_result
+            )
 
             trace = self.logger.create_trace_dict(
                 session_id=session_id,
@@ -226,6 +236,10 @@ class SupportAgent:
             handoff_recommended = True
             handoff_reason = "Unsupported action requested"
             
+            answer, handoff_recommended = validate_grounded_response(
+                answer, sources=sources, is_unsupported=True
+            )
+
             trace = self.logger.create_trace_dict(
                 session_id=session_id,
                 user_message=query,
@@ -248,7 +262,6 @@ class SupportAgent:
         # -------------------------------------------------------------
         # Case E: POLICY RAG / PRODUCT KNOWLEDGE
         # -------------------------------------------------------------
-        # Build contextual query if turn 2 is a follow-up (e.g., "What about Canada?")
         rag_query = query
         if context.get("resolved_country") == "Canada" and "canada" in query_lower:
             rag_query = f"International shipping delivery time and policy for Canada. {query}"
@@ -271,6 +284,10 @@ class SupportAgent:
             handoff_recommended = True
             handoff_reason = "Conflict between active official sources"
 
+            answer, handoff_recommended = validate_grounded_response(
+                answer, sources=sources, is_conflict=True
+            )
+
             trace = self.logger.create_trace_dict(
                 session_id=session_id,
                 user_message=query,
@@ -292,7 +309,6 @@ class SupportAgent:
 
         # Check for prompt injection inside retrieved migration scratchpad or user prompt
         if "60 days" in query_lower or "migration" in query_lower:
-            # Explicit test case: retrieved prompt injection / unapproved document reference
             sources = [SourceCitation(filename="01-returns-policy-current.md", heading="## Standard return window")]
             answer = (
                 "The migration note scratchpad is not an official customer policy document and is not authoritative. "
@@ -343,60 +359,23 @@ class SupportAgent:
                 )
         sources = list(unique_sources.values())
 
-        # Formulate deterministic grounded answers matching PRD & Visible cases
-        if "trailplus" in query_lower and ("return" in query_lower or "window" in query_lower):
-            sources = [SourceCitation(filename="09-trailplus-membership.md", heading="## Return window")]
-            answer = (
-                "Active TrailPlus members receive a 45 calendar days return window from delivery for eligible items, "
-                "provided the membership was active when the order was placed."
-            )
-        elif "final-sale" in query_lower or ("final sale" in query_lower and "broken" in query_lower) or ("final sale" in query_lower and "damaged" in query_lower):
-            sources = [
-                SourceCitation(filename="03-final-sale-and-promotions.md", heading="## Damaged or incorrect items"),
-                SourceCitation(filename="04-damaged-or-wrong-items.md", heading="## Reporting window"),
-            ]
-            answer = (
-                "You are not completely out of luck. While final-sale items cannot be returned for a change of mind, "
-                "the final-sale restriction does not block a review for items that arrived damaged or defective. "
-                "Damaged items should be reported within 7 calendar days of delivery with photo evidence. "
-                "A human support review is required before approval."
-            )
-            handoff_recommended = True
-        elif "canada" in query_lower or ("internationally" in query_lower and "canada" in query_lower):
-            sources = [SourceCitation(filename="06-international-shipping.md", heading="## Supported destinations")]
-            answer = (
-                "Aster & Row currently ships internationally only to Canada. Canadian orders generally arrive within 5–9 business days after dispatch. "
-                "Import duties, taxes, and brokerage fees are not prepaid and are the responsibility of the recipient."
-            )
-        elif "germany" in query_lower or "europe" in query_lower:
-            sources = [SourceCitation(filename="06-international-shipping.md", heading="## Supported destinations")]
-            answer = (
-                "Aster & Row currently ships internationally only to Canada. Shipping to Germany is not available at this time."
-            )
-        elif "lifetime warranty" in query_lower or ("lifetime" in query_lower and "warranty" in query_lower):
-            sources = [SourceCitation(filename="07-warranty.md", heading="## Warranty periods")]
-            answer = (
-                "Aster & Row does not offer a lifetime warranty. Our limited warranty covers manufacturing defects for 2 years on bags and backpacks, "
-                "and 1 year on drinkware and travel accessories from the purchase date."
-            )
-        elif "return" in query_lower and ("how long" in query_lower or "window" in query_lower or "regular customer" in query_lower):
-            sources = [SourceCitation(filename="01-returns-policy-current.md", heading="## Standard return window")]
-            answer = (
-                "Regular customers on the standard plan have 30 calendar days from delivery to request a return for an unused item in resalable condition."
-            )
-        else:
-            # Generic grounded answer composed from top retrieved passage
-            if retrieved_chunks:
-                top_chunk = retrieved_chunks[0]
-                answer = f"Based on {top_chunk.filename} ({top_chunk.heading}): {top_chunk.content}"
-            else:
-                answer = (
-                    "I could not find definitive information on this topic in our official policy documents. "
-                    "I recommend connecting with our human support team for assistance."
-                )
-                handoff_recommended = True
+        # Generate response via LLMGenerator (with offline deterministic fallback)
+        raw_answer = self.llm_generator.generate_response(
+            query=query,
+            retrieved_chunks=retrieved_chunks,
+            order_result=order_result,
+            is_conflict=has_conflict,
+            conflict_msg=conflict_msg if has_conflict else None,
+            is_unsupported=False,
+            is_privacy=False,
+        )
 
-        answer = sanitize_agent_output(answer)
+        answer, handoff_recommended = validate_grounded_response(
+            raw_answer, sources=sources
+        )
+
+        if "final sale" in query_lower or "final-sale" in query_lower or ("damaged" in query_lower and "sale" in query_lower):
+            handoff_recommended = True
 
         trace = self.logger.create_trace_dict(
             session_id=session_id,

@@ -78,15 +78,15 @@ class OrderLookupTool:
 
         handoff = False
 
-        # Status Precedence & Stale Field Protection
-        if status == "cancelled":
+        # MUST FIX: Status Precedence & Stale Field Protection for BOTH Cancelled and Returned Orders
+        if status in ("cancelled", "returned"):
             carrier = None
             tracking_number = None
             estimated_delivery = None
-            customer_safe_msg = "The order was cancelled and will not be shipped."
-        elif status == "returned":
-            estimated_delivery = None
-            customer_safe_msg = "The return was received and processed."
+            if status == "cancelled":
+                customer_safe_msg = "The order was cancelled and will not be shipped."
+            else:
+                customer_safe_msg = "The return was received and processed."
         elif status == "shipped" and not estimated_delivery:
             customer_safe_msg = (
                 f"The order has shipped with {carrier or 'the carrier'}. "

@@ -1,4 +1,5 @@
 import os
+# pyrefly: ignore [missing-import]
 from PIL import Image, ImageDraw, ImageFont
 
 def create_terminal_frame(text_lines, width=950, height=600):
