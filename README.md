@@ -204,6 +204,8 @@ DEBUG_MODE=false
 
 ## 9. Walkthrough Demo
 
+![Aster & Row Reliable RAG Support Agent Demo](demo.gif)
+
 ```text
 ============================================================
 Aster & Row Reliable RAG Support Agent Demo
